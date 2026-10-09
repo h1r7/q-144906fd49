@@ -1,0 +1,88 @@
+name: c0
+on:
+  workflow_dispatch:
+    inputs:
+      v:
+        description: v
+        type: choice
+        options: [v0, v1]
+        default: v0
+permissions:
+  contents: read
+concurrency:
+  group: c0
+  cancel-in-progress: false
+jobs:
+  j0:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - name: c0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: c1
+        run: python3 -I -B a.py k0
+      - name: c2
+        timeout-minutes: 1
+        run: python3 -I -B a.py k1
+      - name: c3
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: c4
+        run: python3 -I -B a.py k2
+      - name: c5
+        timeout-minutes: 2
+        run: python3 -I -B a.py k3
+      - name: c6
+        if: inputs.v == 'v1'
+        run: python3 -I -B a.py k4
+      - name: c7
+        timeout-minutes: 2
+        run: python3 -I -B a.py k5
+      - name: c8
+        if: inputs.v == 'v1'
+        timeout-minutes: 2
+        run: python3 -I -B a.py k6
+      - name: c9
+        if: inputs.v == 'v1'
+        timeout-minutes: 8
+        env:
+          S0: ${{ secrets.S0 }}
+          S1: ${{ secrets.S1 }}
+        run: exec python3 -I -B a.py k7
+      - name: c10
+        if: inputs.v == 'v1'
+        run: python3 -I -B a.py k9
+      - name: d0
+        if: inputs.v == 'v1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d0-${{ github.run_id }}
+          path: ${{ runner.temp }}/q1/4.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: d1
+        if: inputs.v == 'v1'
+        timeout-minutes: 12
+        run: exec python3 -I -B a.py k8
+      - name: d2
+        if: always()
+        run: python3 -I -B a.py k9
+      - name: d3
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/q1/0.json
+            ${{ runner.temp }}/q1/1.json
+            ${{ runner.temp }}/q1/2.json
+            ${{ runner.temp }}/q1/3.json
+            ${{ runner.temp }}/q1/5.json
+            ${{ runner.temp }}/q1/6.json
+            ${{ runner.temp }}/q1/7.json
+            ${{ runner.temp }}/q1/8.json
+          if-no-files-found: warn
+          retention-days: 1
