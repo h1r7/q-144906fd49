@@ -1,9 +1,9 @@
 import hashlib, io, os, re, stat, subprocess, sys, zipfile
 from pathlib import Path
 
-H = 'ed69644a3605f070c1840bcdd00cd2e20a34fb013a0395500a1d6b7e51d34721'
-N = '8410dc0f5735e618067dfa11778b95b4804880960c16e8037d76befd47af12ca'
-C = 36
+H = '7b36f461ac527bbc2a49d17dffe203b8618361ab81d968b9bea2ffffe08877cb'
+N = '858960c354248139c3a556e9fa6f999940af8cc34a3cd20c3a96a3f6843e5f83'
+C = 38
 
 def unpack():
     blob = (Path(__file__).resolve().parent / "b.dat").read_bytes()
