@@ -1,0 +1,144 @@
+name: c5
+on:
+  workflow_dispatch:
+    inputs:
+      archive_url:
+        required: true
+        type: string
+      archive_sha256:
+        required: true
+        type: string
+      member:
+        required: true
+        type: string
+      target_sha256:
+        required: true
+        type: string
+      address:
+        required: true
+        type: string
+      byte_count:
+        required: true
+        type: string
+      window_sha256:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      INPUT_URL: ${{ inputs.archive_url }}
+      INPUT_ARCHIVE_SHA: ${{ inputs.archive_sha256 }}
+      INPUT_MEMBER: ${{ inputs.member }}
+      INPUT_TARGET_SHA: ${{ inputs.target_sha256 }}
+      INPUT_ADDRESS: ${{ inputs.address }}
+      INPUT_COUNT: ${{ inputs.byte_count }}
+      INPUT_WINDOW_SHA: ${{ inputs.window_sha256 }}
+      REA_ANALYSIS_PROVIDER: ghidra
+      REA_GHIDRA_STARTUP_TIMEOUT_MS: '330000'
+      GHIDRA_HEADLESS_MAXMEM: 8G
+    steps:
+      - name: Prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out deps
+          echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
+          node --version > out/node-version.txt
+          "$JAVA_HOME_21_X64/bin/java" -version 2> out/java-version.txt
+          git init -q deps/rea
+          git -C deps/rea remote add origin https://github.com/morluto/rea.git
+          git -C deps/rea fetch -q --depth 1 origin 8e6f37e2a0873ac21ebcc889c27839bfcb7552ca
+          git -C deps/rea checkout -q --detach FETCH_HEAD
+          git -C deps/rea rev-parse HEAD > out/rea-source-commit.txt
+          (cd deps/rea && npm exec --yes --package=npm@11.16.0 -- npm ci --ignore-scripts --no-audit --no-fund && npm run build:cached) > out/build.txt 2>&1
+          curl --fail --location --silent --show-error 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip' -o deps/g.zip
+          printf '%s  %s\n' 'ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db' deps/g.zip | sha256sum -c -
+          unzip -q deps/g.zip -d deps
+          echo "GHIDRA_INSTALL_DIR=$PWD/deps/ghidra_12.1.4_PUBLIC" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, struct, urllib.request, zipfile
+          url=os.environ['INPUT_URL']
+          if not url.startswith('https://setup-aws.rbxcdn.com/mac/'):
+              raise ValueError('unsupported public archive origin')
+          urllib.request.urlretrieve(url, 'deps/input.zip')
+          archive=pathlib.Path('deps/input.zip')
+          ah=hashlib.sha256(archive.read_bytes()).hexdigest()
+          assert ah==os.environ['INPUT_ARCHIVE_SHA']
+          with zipfile.ZipFile(archive) as z:
+              data=z.read(os.environ['INPUT_MEMBER'])
+          th=hashlib.sha256(data).hexdigest()
+          assert th==os.environ['INPUT_TARGET_SHA']
+          pathlib.Path('deps/target').write_bytes(data)
+          pathlib.Path('out/identity.json').write_text(json.dumps({'url':url,'archive_sha256':ah,'member':os.environ['INPUT_MEMBER'],'target_sha256':th,'bytes':len(data),'target_executed':False},indent=2))
+          assert struct.unpack_from('<II',data)==(0xfeedfacf,0x1000007)
+          start=int(os.environ['INPUT_ADDRESS'],16)
+          count=int(os.environ['INPUT_COUNT'])
+          assert 0<count<=65536
+          end=start+count
+          n,cmdbytes=struct.unpack_from('<II',data,16)
+          pos=32
+          matches=[]
+          for _ in range(n):
+              cmd,size=struct.unpack_from('<II',data,pos)
+              assert size>=8 and pos+size<=32+cmdbytes<=len(data)
+              if cmd==0x19:
+                  va,vs,fo,fs=struct.unpack_from('<QQQQ',data,pos+24)
+                  if va<=start<end<=va+fs:
+                      offset=fo+start-va
+                      assert offset+count<=len(data)
+                      matches.append((offset,data[offset:offset+count]))
+              pos+=size
+          assert len(matches)==1
+          offset,window=matches[0]
+          wh=hashlib.sha256(window).hexdigest()
+          assert wh==os.environ['INPUT_WINDOW_SHA']
+          pathlib.Path('deps/window').write_bytes(window)
+          pathlib.Path('out/window-identity.json').write_text(json.dumps({'parent_sha256':th,'source_file_offset':offset,'virtual_start':hex(start),'virtual_end_exclusive':hex(end),'bytes':count,'derived_sha256':wh,'whole_image_call_graph_available':False,'target_executed':False},indent=2))
+          PY
+      - name: Analyze
+        shell: bash
+        run: |
+          set -euo pipefail
+          REA="$PWD/deps/rea/scripts/rea.mjs"
+          node "$REA" doctor --provider ghidra --json > out/doctor.json
+          mkdir -m 700 "$RUNNER_TEMP/rea-analysis"
+          export TMPDIR="$RUNNER_TEMP/rea-analysis"
+          python3 -u - <<'PY' &
+          import hashlib, os, pathlib, time
+          root=pathlib.Path(os.environ['TMPDIR'])
+          out=pathlib.Path('out/analysis-progress')
+          out.mkdir()
+          while True:
+              for p in root.rglob('*.log'):
+                  if p.is_file() and not p.is_symlink():
+                      try:
+                          with p.open('rb') as f:
+                              f.seek(max(0,p.stat().st_size-65536))
+                              tail=f.read(65536)
+                          name=hashlib.sha256(str(p.relative_to(root)).encode()).hexdigest()[:16]+'.log'
+                          (out/name).write_bytes(tail)
+                      except FileNotFoundError:
+                          pass
+              time.sleep(30)
+          PY
+          monitor_pid=$!
+          trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+          date -u +%FT%TZ > out/start.txt
+          start=$SECONDS
+          node "$REA" function "$PWD/deps/window" "$INPUT_ADDRESS" --target-format raw-binary --architecture x86_64 --entry-point "$INPUT_ADDRESS" --provider ghidra --snapshot "$PWD/out/snapshot.json" --format json > out/function.json
+          echo "$((SECONDS-start))" > out/cold-seconds.txt
+          start=$SECONDS
+          node "$REA" function "$PWD/deps/window" "$INPUT_ADDRESS" --target-format raw-binary --architecture x86_64 --entry-point "$INPUT_ADDRESS" --provider ghidra --snapshot "$PWD/out/snapshot.json" --format json > out/function-replay.json
+          echo "$((SECONDS-start))" > out/replay-seconds.txt
+          date -u +%FT%TZ > out/end.txt
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: evidence
+          path: out/
+          retention-days: 3
