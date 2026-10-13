@@ -54,10 +54,26 @@ jobs:
           git -C deps/rea fetch -q --depth 1 origin 8e6f37e2a0873ac21ebcc889c27839bfcb7552ca
           git -C deps/rea checkout -q --detach FETCH_HEAD
           git -C deps/rea rev-parse HEAD > out/rea-source-commit.txt
+          python3 - <<'PY'
+          import hashlib,json,pathlib
+          p=pathlib.Path('deps/rea/bridge/ghidra/ReaGhidraBridge.java')
+          before=p.read_bytes()
+          assert hashlib.sha256(before).hexdigest()=='351bcb4ec08ad2662871909bbb93e7b253db39854ef58efa824401bcddcd4501'
+          s=before.decode()
+          assert s.count('import java.util.Comparator;')==1
+          assert 'import java.util.HashMap;' not in s
+          s=s.replace('import java.util.Comparator;','import java.util.Comparator;\nimport java.util.HashMap;',1)
+          p.write_text(s)
+          assert hashlib.sha256(p.read_bytes()).hexdigest()=='481044265b7c62c459c39bcc40e5c82a3c64e8cf0353d5d8e050b2cc1eec282f'
+          pathlib.Path('out/bridge-patch.json').write_text(json.dumps({'change':'add missing java.util.HashMap import','before_sha256':hashlib.sha256(before).hexdigest(),'after_sha256':hashlib.sha256(p.read_bytes()).hexdigest()},indent=2))
+          PY
           (cd deps/rea && npm exec --yes --package=npm@11.16.0 -- npm ci --ignore-scripts --no-audit --no-fund && npm run build:cached) > out/build.txt 2>&1
           curl --fail --location --silent --show-error 'https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip' -o deps/g.zip
           printf '%s  %s\n' 'ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db' deps/g.zip | sha256sum -c -
           unzip -q deps/g.zip -d deps
+          mkdir deps/bridge-classes
+          jars=$(find "$PWD/deps/ghidra_12.1.4_PUBLIC/Ghidra" -name '*.jar' -printf '%p:' )
+          "$JAVA_HOME_21_X64/bin/javac" -proc:none -cp "$jars" -d deps/bridge-classes deps/rea/bridge/ghidra/*.java > out/bridge-compile.txt 2>&1
           echo "GHIDRA_INSTALL_DIR=$PWD/deps/ghidra_12.1.4_PUBLIC" >> "$GITHUB_ENV"
           python3 - <<'PY'
           import hashlib, json, os, pathlib, struct, urllib.request, zipfile
