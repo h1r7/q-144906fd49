@@ -21,6 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - name: c1
+        id: c1
         timeout-minutes: 2
         shell: bash
         env:
@@ -30,20 +31,21 @@ jobs:
           PUBLIC_COMMIT: ${{ github.sha }}
         run: |
           python3 -I -B - <<'PY'
-          import hashlib, importlib.util, pathlib, sys, tempfile, zipfile
+          import hashlib, importlib.util, json, os, pathlib, re, sys, tempfile, time, zipfile
           code = 1
+          metadata_valid = False
           try:
               bundle = pathlib.Path("f.dat").read_bytes()
-              if hashlib.sha256(bundle).hexdigest() != "17abd6d4b750c3c500240ec01634a294c515d7c04d13d267dccf1a1f15f0797d":
+              if hashlib.sha256(bundle).hexdigest() != "6de1ebdc25273d07e1bf096dae950efeaeb875a633aefc89e4357dfe1e2c6cf8":
                   raise ValueError("bundle")
               with tempfile.TemporaryDirectory(prefix="q8-loader-") as folder:
                   folder = pathlib.Path(folder)
                   with zipfile.ZipFile("f.dat") as archive:
                       infos = archive.infolist()
-                      if len(infos) != 1 or infos[0].filename != "transport_bootstrap.py" or infos[0].file_size != 19194 or infos[0].flag_bits & 1:
+                      if len(infos) != 1 or infos[0].filename != "transport_bootstrap.py" or infos[0].file_size != 24081 or infos[0].flag_bits & 1:
                           raise ValueError("member")
                       payload = archive.read(infos[0])
-                      if hashlib.sha256(payload).hexdigest() != "a9c8c3bd3ffd2e3a7d7399a8d0004e4766cb81986c7f49908244e85bf194316a":
+                      if hashlib.sha256(payload).hexdigest() != "ff41c66488f8eff6d6cba86c4785e3ac9abc89339174fa7f2fd65258a61d2298":
                           raise ValueError("source")
                       entry = folder / "transport_bootstrap.py"
                       entry.write_bytes(payload)
@@ -51,11 +53,48 @@ jobs:
                   module = importlib.util.module_from_spec(spec)
                   spec.loader.exec_module(module)
                   code = module.start()
+                  exported = json.loads((module.control_root() / "public/0.json").read_text(encoding="ascii"))
+                  if code == 0:
+                      module.validate_ready(exported)
+                  elif code == 1:
+                      module.validate_failure(exported)
+                  else:
+                      raise ValueError("result")
+                  metadata_valid = True
           except BaseException:
+              # A loader/control failure must still produce only the fixed failure projection.
+              code = 1
+              metadata_valid = False
+              try:
+                  parent = pathlib.Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+                  output = parent / "q8-control/public"
+                  if output.resolve() != output or output.is_symlink():
+                      raise ValueError("output")
+                  output.mkdir(parents=True, exist_ok=True)
+                  identity = {}
+                  for field, variable, pattern in (("runId", "PUBLIC_RUN_ID", r"[0-9]{1,20}"), ("attempt", "PUBLIC_RUN_ATTEMPT", r"[0-9]{1,6}"), ("commit", "PUBLIC_COMMIT", r"[a-f0-9]{40}")):
+                      value = os.environ.get(variable, "")
+                      identity[field] = value if re.fullmatch(pattern, value) else None
+                  failure = {"schema":"key-only-session-failure-v1","status":"transport_failed",**identity,"stage":"bootstrap","failureClass":"unexpected_error","processExitCode":None,"failedAtUnix":int(time.time())}
+                  temporary = output / "0.json.new"
+                  temporary.write_text(json.dumps(failure,separators=(",",":"))+"\n",encoding="ascii")
+                  temporary.replace(output / "0.json")
+                  if json.loads((output / "0.json").read_text(encoding="ascii")) != failure:
+                      raise ValueError("projection")
+                  metadata_valid = True
+              except BaseException:
+                  print('{"schema":"key-only-session-v1","status":"fallback_failed"}', flush=True)
               print('{"schema":"key-only-session-v1","status":"bootstrap_failed"}', flush=True)
+          try:
+              with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a",encoding="ascii") as output_flag:
+                  output_flag.write("public_metadata_valid="+("true" if metadata_valid else "false")+"\n")
+          except BaseException:
+              code = 1
+              print('{"schema":"key-only-session-v1","status":"output_failed"}', flush=True)
           raise SystemExit(code)
           PY
       - name: c2
+        if: ${{ always() && steps.c1.outputs.public_metadata_valid == 'true' }}
         timeout-minutes: 1
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
