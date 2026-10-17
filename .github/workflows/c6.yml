@@ -1,0 +1,72 @@
+name: c6
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: c6
+  cancel-in-progress: false
+jobs:
+  j0:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - name: c0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: c1
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib, importlib.util, json, os, pathlib, subprocess, sys, tempfile, zipfile
+          expected = {'probe.cpp': ('0c5085849b39e1b615892f195d76126a0a78f91936a11a604cfbb776f423fe25', 4156), 'run_probe.py': ('4c3ea79cee0722e01ca2ff03137bb2a716d02c6c9d23d544b033df2f58de660e', 5259)}
+          blob = pathlib.Path("d.dat").read_bytes()
+          if hashlib.sha256(blob).hexdigest() != "643b11eecb5e9182b15de2c30740d8f9f7ae46b8aab59105d914ecf8df99542c":
+              raise SystemExit("bundle validation failed")
+          with tempfile.TemporaryDirectory(prefix="c6-") as work:
+              work = pathlib.Path(work)
+              with zipfile.ZipFile("d.dat") as archive:
+                  infos = archive.infolist()
+                  if [info.filename for info in infos] != list(expected):
+                      raise SystemExit("member validation failed")
+                  for info in infos:
+                      sha, size = expected[info.filename]
+                      if info.file_size != size or info.flag_bits & 1:
+                          raise SystemExit("member validation failed")
+                      data = archive.read(info)
+                      if hashlib.sha256(data).hexdigest() != sha:
+                          raise SystemExit("member validation failed")
+                      (work / info.filename).write_bytes(data)
+              spec = importlib.util.spec_from_file_location("closed_fixture", work / "run_probe.py")
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              try:
+                  completed = subprocess.run([sys.executable, "-I", "-B", str(work / "run_probe.py")], capture_output=True, timeout=100)
+                  returncode = completed.returncode
+                  if len(completed.stdout) > 1048576:
+                      raise ValueError("size")
+                  result = module.validate(json.loads(completed.stdout.decode("utf-8")))
+              except (OSError, subprocess.TimeoutExpired):
+                  returncode = 1
+                  result = module.result("error", "probe_failed")
+              except (ValueError, TypeError, KeyError):
+                  returncode = 1
+                  result = module.result("error", "validation_failed")
+              output = json.dumps(result, ensure_ascii=True, separators=(",", ":")) + "\n"
+              destination = pathlib.Path(os.environ["RUNNER_TEMP"]) / "c6-output"
+              destination.mkdir(exist_ok=True)
+              (destination / "0.json").write_text(output, encoding="utf-8")
+              print(output, end="")
+              if returncode or result["status"] != "completed":
+                  raise SystemExit(1)
+          PY
+      - name: c2
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d6-${{ github.run_id }}
+          path: ${{ runner.temp }}/c6-output/0.json
+          if-no-files-found: error
+          retention-days: 1
