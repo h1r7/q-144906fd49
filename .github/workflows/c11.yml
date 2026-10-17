@@ -1,0 +1,204 @@
+name: c11
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: c11
+  cancel-in-progress: false
+jobs:
+  j0:
+    runs-on: macos-15-intel
+    timeout-minutes: 4
+    steps:
+      - name: c0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: c1
+        id: probe
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          python3 -I -B - <<'PY' 2>"${RUNNER_TEMP}/c11-driver.stderr"
+          """Public inline workflow source; do not execute before separate runtime Go."""
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import stat
+          import subprocess
+          import sys
+          import tempfile
+          import zipfile
+          
+          ARCHIVE_SHA256 = "feb1dd9440d11fed33cb3e31f83c384005aef2ed8989cd563ab616b2fb2bfd2c"
+          EXPECTED = {'fixture.cpp': ('c16dc9cc29c1e7689925fcc4c21726d9c119adbb879518ee8ecaf39feb39934b', 310), 'host.py': ('5edaa9c18620b90a0a3471256c3891125eecdd45672cc72715650fc91ea34c7f', 10541), 'runner.py': ('ecb9d1396dd2d8336e7a591ad51044084ab0d4ea6935f4e4e310cf4648f8c291', 20604)}
+          NORMAL_KEYS = {"schema", "status", "reason", "source_pins_valid", "compile_ok", "sdk_ready", "sdk_elapsed_ms", "fixture_execution_count", "fixture_marker_observed", "host", "host_direct_exit", "fixture_direct_exit", "owned_cleanup_confirmed", "workspace_removed", "descendants_cleanup_proven", "read_cap_bytes", "disk_spool_cap_enforced", "deadlines_hard", "original_target_executions", "gate_promotions"}
+          NORMAL_REASONS = {"environment_precondition_unknown", "compile_unknown", "sdk_startup_unknown", "sdk_workspace_unknown", "fixture_start_unknown", "fixture_marker_unknown", "fixture_lifetime_unknown", "host_timeout_or_unknown", "host_cli_failed", "os_permission_denial_stop", "owned_control_observation_complete", "host_observation_unknown", "owned_cleanup_unknown"}
+          HOST_KEYS = {"schema", "status", "reason", "owner_input_valid", "attach_attempted", "attach_returned", "attached", "process_identity_matched", "metadata_complete", "module_count", "libcxx_count", "libcxx_path_expected", "libcxx_uuid_present", "libcxx_version_present", "detach_attempted", "detach_succeeded", "debugger_destroyed", "last_checkpoint", "checkpoint_write_ok", "permission_denial_observed"}
+          HOST_REASONS = {"input_invalid", "debugger_setup_unknown", "attach_unknown", "permission_denied", "returned_identity_mismatch", "metadata_unknown", "metadata_incomplete", "detach_unknown", "checkpoint_failed", "debugger_cleanup_unknown", "own_fixture_metadata_and_detach_complete"}
+          FAILURE_KEYS = {"schema", "status", "reason", "owned_cleanup_confirmed", "workspace_removed", "descendants_cleanup_proven", "original_target_executions", "gate_promotions"}
+          
+          def failure():
+              return {"schema": "owned-attach-entry-failure-v1", "status": "unknown", "reason": "entry_failure", "owned_cleanup_confirmed": False, "workspace_removed": False, "descendants_cleanup_proven": False, "original_target_executions": 0, "gate_promotions": 0}
+          
+          def boolean(value, nullable=False):
+              return type(value) is bool or nullable and value is None
+          
+          def integer(value, maximum, nullable=False):
+              return type(value) is int and 0 <= value <= maximum or nullable and value is None
+          
+          def validate_host(data):
+              if type(data) is not dict or set(data) != HOST_KEYS or data["schema"] != "owned-attach-result-v1":
+                  raise ValueError("host schema")
+              if data["status"] not in {"pass", "failed", "unknown", "STOP_UNKNOWN"} or data["reason"] not in HOST_REASONS:
+                  raise ValueError("host enum")
+              for key in ("owner_input_valid", "attach_attempted", "attach_returned", "metadata_complete", "detach_attempted", "debugger_destroyed", "checkpoint_write_ok"):
+                  if not boolean(data[key]):
+                      raise ValueError("host bool")
+              for key in ("attached", "process_identity_matched", "libcxx_path_expected", "libcxx_uuid_present", "libcxx_version_present", "detach_succeeded"):
+                  if not boolean(data[key], True):
+                      raise ValueError("host nullable bool")
+              if data["permission_denial_observed"] is not None and data["permission_denial_observed"] is not True:
+                  raise ValueError("host denial")
+              if data["last_checkpoint"] not in {None, "before_attach", "after_attach", "after_metadata", "after_detach"}:
+                  raise ValueError("host checkpoint")
+              if any(not integer(data[k], 100000, True) for k in ("module_count", "libcxx_count")):
+                  raise ValueError("host count")
+              if data["status"] == "pass":
+                  required = ("owner_input_valid", "attach_attempted", "attach_returned", "attached", "process_identity_matched", "metadata_complete", "libcxx_path_expected", "libcxx_uuid_present", "libcxx_version_present", "detach_attempted", "detach_succeeded", "debugger_destroyed", "checkpoint_write_ok")
+                  if (any(data[k] is not True for k in required) or data["libcxx_count"] != 1 or data["last_checkpoint"] != "after_detach" or data["permission_denial_observed"] is not None or data["reason"] != "own_fixture_metadata_and_detach_complete"):
+                      raise ValueError("host pass claims")
+              return data
+          
+          def validate(data):
+              if type(data) is not dict:
+                  raise ValueError("root")
+              if data.get("schema") == "owned-attach-entry-failure-v1":
+                  if (set(data) != FAILURE_KEYS or data != failure()
+                          or any(type(data[k]) is not int for k in ("original_target_executions", "gate_promotions"))
+                          or any(type(data[k]) is not bool for k in ("owned_cleanup_confirmed", "workspace_removed", "descendants_cleanup_proven"))):
+                      raise ValueError("entry failure")
+                  return data
+              if set(data) != NORMAL_KEYS or data["schema"] != "owned-attach-control-v1":
+                  raise ValueError("root schema")
+              if data["status"] not in {"pass", "unknown", "STOP_UNKNOWN"} or data["reason"] not in NORMAL_REASONS:
+                  raise ValueError("root enum")
+              for key in ("source_pins_valid", "compile_ok", "sdk_ready", "fixture_marker_observed", "owned_cleanup_confirmed", "workspace_removed", "descendants_cleanup_proven", "disk_spool_cap_enforced", "deadlines_hard"):
+                  if not boolean(data[key]):
+                      raise ValueError("root bool")
+              for key in ("host_direct_exit", "fixture_direct_exit"):
+                  if not boolean(data[key], True):
+                      raise ValueError("root nullable bool")
+              if not integer(data["sdk_elapsed_ms"], 300000, True) or not integer(data["fixture_execution_count"], 1, True):
+                  raise ValueError("root count")
+              for key, value in (("read_cap_bytes", 65536), ("original_target_executions", 0), ("gate_promotions", 0)):
+                  if type(data[key]) is not int or data[key] != value:
+                      raise ValueError("root scope number")
+              if any(data[k] is not False for k in ("descendants_cleanup_proven", "disk_spool_cap_enforced", "deadlines_hard")):
+                  raise ValueError("unproved strong claim")
+              if data["host"] is not None:
+                  validate_host(data["host"])
+              if data["status"] == "pass":
+                  required = ("source_pins_valid", "compile_ok", "sdk_ready", "fixture_marker_observed", "host_direct_exit", "fixture_direct_exit", "owned_cleanup_confirmed", "workspace_removed")
+                  if (any(data[k] is not True for k in required) or data["fixture_execution_count"] != 1 or data["host"] is None or data["host"]["status"] != "pass" or data["reason"] != "owned_control_observation_complete"):
+                      raise ValueError("root pass claims")
+              if data["status"] == "STOP_UNKNOWN":
+                  if data["host"] is None or data["host"]["permission_denial_observed"] is not True or data["reason"] != "os_permission_denial_stop":
+                      raise ValueError("root denial claims")
+              return data
+          
+          def run_once():
+              """No target input; only this archive's runner can create an own fixture."""
+              output = failure()
+              proc = None
+              work = None
+              old_mask = os.umask(0o077)
+              try:
+                  blob = Path("i.dat").read_bytes()
+                  if hashlib.sha256(blob).hexdigest() != ARCHIVE_SHA256:
+                      return output
+                  # This outer workspace and any private spools remain for ephemeral job
+                  # teardown. Never remove files while a timed-out descendant may use them.
+                  work = Path(tempfile.mkdtemp(prefix="public-owned-control-"))
+                  os.chmod(work, 0o700)
+                  with zipfile.ZipFile("i.dat") as archive:
+                      infos = archive.infolist()
+                      if [info.filename for info in infos] != list(EXPECTED):
+                          return output
+                      for info in infos:
+                          digest, length = EXPECTED[info.filename]
+                          if info.flag_bits & 1 or info.file_size != length:
+                              return output
+                          data = archive.read(info)
+                          if hashlib.sha256(data).hexdigest() != digest:
+                              return output
+                          with (work / info.filename).open("xb") as stream:
+                              stream.write(data)
+                          os.chmod(work / info.filename, 0o600)
+                  child_env = {"HOME": os.environ.get("HOME", ""), "PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": str(work), "PYTHONDONTWRITEBYTECODE": "1"}
+                  with (work / "runner.stdout").open("xb") as stdout, (work / "runner.stderr").open("xb") as stderr:
+                      proc = subprocess.Popen([sys.executable, "-I", "-B", str(work / "runner.py")], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, cwd=work, env=child_env)
+                      try:
+                          proc.wait(timeout=100)
+                      except subprocess.TimeoutExpired:
+                          return output
+                  if proc.returncode != 0:
+                      return output
+                  with (work / "runner.stdout").open("rb") as stream:
+                      raw = stream.read(65537)
+                  if len(raw) > 65536:
+                      return output
+                  output = validate(json.loads(raw.decode("utf-8", errors="strict")))
+                  return output
+              except BaseException:
+                  return failure()
+              finally:
+                  if proc is not None and proc.poll() is None:
+                      # Owned direct wrapper child only. This does not cancel attach or
+                      # prove fixture/SDK descendants ended; failure keeps cleanup false.
+                      try:
+                          proc.terminate()
+                          proc.wait(timeout=1)
+                      except BaseException:
+                          if proc.poll() is None:
+                              try:
+                                  proc.kill()
+                                  proc.wait(timeout=1)
+                              except BaseException:
+                                  pass
+                  os.umask(old_mask)
+          
+          def entry():
+              data = validate(run_once())
+              output = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
+              destination = Path(os.environ["RUNNER_TEMP"]) / "c11-output"
+              destination.mkdir(mode=0o700, exist_ok=False)
+              with (destination / "0.json").open("x", encoding="ascii") as stream:
+                  stream.write(output)
+              # Artifact upload is conditional on this fresh validated write. No stale
+              # output is trusted after extraction, import, interpreter or wrapper failure.
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="ascii") as stream:
+                  stream.write("validated=true\n")
+              print(output, end="")
+              return 0 if data["status"] == "pass" else 1
+          
+          if __name__ == "__main__":
+              try:
+                  raise SystemExit(entry())
+              except SystemExit:
+                  raise
+              except BaseException:
+                  print(json.dumps(failure(), sort_keys=True, separators=(",", ":")))
+                  raise SystemExit(1)
+          PY
+      - name: c2
+        if: ${{ always() && steps.probe.outputs.validated == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d11-${{ github.run_id }}
+          path: ${{ runner.temp }}/c11-output/0.json
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
