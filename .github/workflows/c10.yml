@@ -1,0 +1,32 @@
+name: c10
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: c10
+  cancel-in-progress: false
+jobs:
+  j0:
+    runs-on: macos-15-intel
+    timeout-minutes: 3
+    steps:
+      - name: c0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: c1
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          python3 -I -B -c "import hashlib,pathlib; assert hashlib.sha256(pathlib.Path('g.py').read_bytes()).hexdigest() == '383bae12bd43ad863a07b614d5b14ee615f38fea9f857c595952be50bb606a0c'"
+          python3 -I -B g.py
+      - name: c2
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: c10
+          path: 0.json
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
