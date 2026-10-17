@@ -1,0 +1,80 @@
+name: c8
+on:
+  workflow_dispatch:
+    inputs:
+      client_public_key:
+        description: One ssh-ed25519 PUBLIC key, without a comment or options
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: c8
+  cancel-in-progress: false
+jobs:
+  j0:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - name: c0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: c1
+        timeout-minutes: 2
+        shell: bash
+        env:
+          CLIENT_PUBLIC_KEY: ${{ inputs.client_public_key }}
+          PUBLIC_RUN_ID: ${{ github.run_id }}
+          PUBLIC_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PUBLIC_COMMIT: ${{ github.sha }}
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib, importlib.util, pathlib, sys, tempfile, zipfile
+          code = 1
+          try:
+              bundle = pathlib.Path("f.dat").read_bytes()
+              if hashlib.sha256(bundle).hexdigest() != "17abd6d4b750c3c500240ec01634a294c515d7c04d13d267dccf1a1f15f0797d":
+                  raise ValueError("bundle")
+              with tempfile.TemporaryDirectory(prefix="q8-loader-") as folder:
+                  folder = pathlib.Path(folder)
+                  with zipfile.ZipFile("f.dat") as archive:
+                      infos = archive.infolist()
+                      if len(infos) != 1 or infos[0].filename != "transport_bootstrap.py" or infos[0].file_size != 19194 or infos[0].flag_bits & 1:
+                          raise ValueError("member")
+                      payload = archive.read(infos[0])
+                      if hashlib.sha256(payload).hexdigest() != "a9c8c3bd3ffd2e3a7d7399a8d0004e4766cb81986c7f49908244e85bf194316a":
+                          raise ValueError("source")
+                      entry = folder / "transport_bootstrap.py"
+                      entry.write_bytes(payload)
+                  spec = importlib.util.spec_from_file_location("bounded_transport", entry)
+                  module = importlib.util.module_from_spec(spec)
+                  spec.loader.exec_module(module)
+                  code = module.start()
+          except BaseException:
+              print('{"schema":"key-only-session-v1","status":"bootstrap_failed"}', flush=True)
+          raise SystemExit(code)
+          PY
+      - name: c2
+        timeout-minutes: 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: d8-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/q8-control/public/0.json
+          if-no-files-found: error
+          retention-days: 1
+          include-hidden-files: false
+      - name: c3
+        timeout-minutes: 8
+        shell: bash
+        run: python3 -I -B "$RUNNER_TEMP/q8-control/transport_bootstrap.py" --wait
+      - name: c4
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/q8-control/transport_bootstrap.py" ]; then
+            python3 -I -B "$RUNNER_TEMP/q8-control/transport_bootstrap.py" --stop
+          else
+            echo '{"schema":"key-only-session-v1","status":"control_absent"}'
+          fi
