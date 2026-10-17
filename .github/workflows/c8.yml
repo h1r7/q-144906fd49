@@ -36,16 +36,16 @@ jobs:
           metadata_valid = False
           try:
               bundle = pathlib.Path("f.dat").read_bytes()
-              if hashlib.sha256(bundle).hexdigest() != "6de1ebdc25273d07e1bf096dae950efeaeb875a633aefc89e4357dfe1e2c6cf8":
+              if hashlib.sha256(bundle).hexdigest() != "c31862663520f967f84e8f21bfdcf312eb56cb5bd2b7b0ca7bead167bd1e46cb":
                   raise ValueError("bundle")
               with tempfile.TemporaryDirectory(prefix="q8-loader-") as folder:
                   folder = pathlib.Path(folder)
                   with zipfile.ZipFile("f.dat") as archive:
                       infos = archive.infolist()
-                      if len(infos) != 1 or infos[0].filename != "transport_bootstrap.py" or infos[0].file_size != 24081 or infos[0].flag_bits & 1:
+                      if len(infos) != 1 or infos[0].filename != "transport_bootstrap.py" or infos[0].file_size != 24703 or infos[0].flag_bits & 1:
                           raise ValueError("member")
                       payload = archive.read(infos[0])
-                      if hashlib.sha256(payload).hexdigest() != "ff41c66488f8eff6d6cba86c4785e3ac9abc89339174fa7f2fd65258a61d2298":
+                      if hashlib.sha256(payload).hexdigest() != "ec29890a77cbabc17f81c20acd9b6169b29f494716ece6ca9f903efd874d8ec7":
                           raise ValueError("source")
                       entry = folder / "transport_bootstrap.py"
                       entry.write_bytes(payload)
