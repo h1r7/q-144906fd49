@@ -21,9 +21,9 @@ jobs:
         run: |
           python3 -I -B - <<'PY'
           import hashlib, importlib.util, json, os, pathlib, subprocess, sys, tempfile, zipfile
-          expected = {'copy.cpp': ('618dd01fdb4aad96dec52ab07cb40fbe8c71235d650fda857f401b1f4aab70d0', 241), 'probe.cpp': ('4ce6bc9c477ba716c0eccc3d34f0dc4c4fb56291f64594cf823b7cc453380299', 5290), 'run_probe.py': ('b97a3a1d7948c1ecc8df5cf21c0cbcacc8e0264abdc8881290671acd6ee9221e', 16490)}
+          expected = {'copy.cpp': ('618dd01fdb4aad96dec52ab07cb40fbe8c71235d650fda857f401b1f4aab70d0', 241), 'probe.cpp': ('4ce6bc9c477ba716c0eccc3d34f0dc4c4fb56291f64594cf823b7cc453380299', 5290), 'run_probe.py': ('58e71f8f4bd34541df75c38a073731eabf4395aad056a460785f513f4cd05596', 16488)}
           blob = pathlib.Path("h.dat").read_bytes()
-          if hashlib.sha256(blob).hexdigest() != "f43b29e913ad1e5415084bff40401ff835ada1956ee25dcc1d4a0cc3a3653ccf":
+          if hashlib.sha256(blob).hexdigest() != "b9849b7f9078e347339b7f1a95ceb8a2d09dd43858a587294b4b364cb8e03f77":
               raise SystemExit("bundle validation failed")
           with tempfile.TemporaryDirectory(prefix="c9-") as work:
               work = pathlib.Path(work)
